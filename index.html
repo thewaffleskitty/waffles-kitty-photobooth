@@ -195,7 +195,13 @@ html,body{width:100%;height:100%;background:#000;overflow:hidden;position:fixed;
 <!-- ===== COUNTDOWN ===== -->
 <div class="screen" id="s-countdown">
   <div class="cd-progress"><div class="cd-bar" id="cdBar"></div></div>
-  <div class="cam-fallback" id="camFallback"><div class="cam-fallback-icon">📷</div></div>
+  <div class="cam-fallback" id="camFallback">
+    <div style="display:flex;flex-direction:column;align-items:center;gap:16px;padding:32px;">
+      <div style="font-size:56px;">📷</div>
+      <div style="font-family:LazyDog,cursive;color:rgba(255,255,255,0.5);font-size:16px;text-align:center;line-height:1.6;">Starting camera...</div>
+      <button id="retryBtn" onclick="retryCam()" style="display:none;font-family:LazyDog,cursive;color:#EF9F27;border:2.5px solid #EF9F27;border-radius:14px;background:transparent;padding:10px 24px;font-size:15px;cursor:pointer;">Tap to enable camera</button>
+    </div>
+  </div>
   <video id="camVideo" autoplay playsinline muted style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:2;display:none;"></video>
   <div class="focus-ring" style="z-index:6;">
     <div class="fr-c fr-tl"></div><div class="fr-c fr-tr"></div>
@@ -388,7 +394,12 @@ html,body{width:100%;height:100%;background:#000;overflow:hidden;position:fixed;
 <div class="perm-overlay" id="permOverlay">
   <img src="data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/4gHYSUNDX1BST0ZJTEUAAQEAAAHIAAAAAAQwAABtbnRyUkdCIFhZWiAH4AABAAEAAAAAAABhY3NwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAA9tYAAQAAAADTLQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA..." style="width:80px;height:80px;border-radius:50%;opacity:0.7;" alt="">
   <div class="perm-msg">Camera access needed!</div>
-  <div class="perm-sub">Tap OK when Safari asks for camera permission. If you denied it, go to Settings → Safari → Camera and allow access.</div>
+  <div class="perm-sub">To fix this on iPad:<br><br>
+  1. Go to <strong style="color:#EF9F27;">Settings</strong><br>
+  2. Scroll down and tap <strong style="color:#EF9F27;">Privacy & Security</strong><br>
+  3. Tap <strong style="color:#EF9F27;">Camera</strong><br>
+  4. Find <strong style="color:#EF9F27;">Safari</strong> and turn it ON<br><br>
+  Then close and reopen the app.</div>
   <button class="abtn amber" onclick="document.getElementById('permOverlay').classList.remove('open');startCamera()">OK, got it</button>
 </div>
 
@@ -422,7 +433,9 @@ function goTo(name) {
 function tapStart() {
   state.photos = [];
   goTo('countdown');
-  startCamera();
+  // Small delay ensures the screen transition completes before camera request
+  // iOS requires camera requests to come from a direct user gesture
+  setTimeout(startCamera, 150);
 }
 
 function retake() {
@@ -437,10 +450,20 @@ async function startCamera() {
   const fallback = document.getElementById('camFallback');
   try {
     if (state.camStream) { state.camStream.getTracks().forEach(t => t.stop()); }
-    const stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: 'user', width: { ideal: 1920 }, height: { ideal: 1080 } },
-      audio: false
-    });
+    // iOS standalone PWA needs simple constraints first, then ideal
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: 'user' } },
+        audio: false
+      });
+    } catch(e1) {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+      } catch(e2) {
+        throw e2;
+      }
+    }
     state.camStream = stream;
     video.srcObject = stream;
     video.style.display = 'block';
@@ -448,15 +471,27 @@ async function startCamera() {
     video.play();
     setTimeout(startCountdown, 600);
   } catch(e) {
-    console.warn('Camera error:', e);
+    console.warn('Camera error:', e.name, e.message);
     fallback.style.display = 'flex';
     video.style.display = 'none';
-    if (e.name === 'NotAllowedError') {
+    if (e.name === 'NotAllowedError' || e.name === 'PermissionDeniedError') {
       document.getElementById('permOverlay').classList.add('open');
+    } else if (e.name === 'NotFoundError' || e.name === 'DevicesNotFoundError') {
+      showToast('No camera found on this device');
+      setTimeout(startCountdown, 800);
     } else {
-      setTimeout(startCountdown, 500);
+      // Show retry button for other errors (common in iOS standalone mode)
+      const retryBtn = document.getElementById('retryBtn');
+      if (retryBtn) retryBtn.style.display = 'block';
+      const lbl = fallback.querySelector('div + div');
+      if (lbl) lbl.textContent = 'Camera needs permission';
     }
   }
+}
+
+function retryCam() {
+  document.getElementById('retryBtn').style.display = 'none';
+  startCamera();
 }
 
 function stopCamera() {
